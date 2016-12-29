@@ -12,8 +12,14 @@ package disproj;
 import java.rmi.*;
 import java.rmi.server.*;
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 
 public class ShapeListClient implements WhiteBoardCallback{
@@ -33,8 +39,10 @@ public class ShapeListClient implements WhiteBoardCallback{
         try{
 	    //Let's always get a copy of the state first.. 
             shapeListApi  = (ShapeList) Naming.lookup("//localhost/ShapeList");
-
-            copyGraphicalObjects(shapeListApi.allShapes(), shapeListApi.getVersion());
+            
+            //Synch list with server.
+            listOfGObjs.addAll(newObjects(shapeListApi.allShapes(latestVersion), shapeListApi.getVersion()));
+            
             
             //Time to sign up to the server!
             WhiteBoardCallback w = new ShapeListClient();
@@ -43,40 +51,39 @@ public class ShapeListClient implements WhiteBoardCallback{
             
             //Start input reader
             BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-                        
+            startMessage();            
             boolean running = true;
             while(running){
                 try{
-                    startMessage();
+                    
                     String userinput = reader.readLine();  
                     
                     //Read
-                    if(userinput.equals("R")){
-                      
-                      printObjectList(listOfGObjs);
-                    }
-                    
-                    //Write
-                    else if(userinput.equals("W")){
-                      String shapeType = reader.readLine();
-                      GraphicalObject g = new GraphicalObject(shapeType);
-                      shapeListApi.newShape(g);
-                    }
-                    
-                    //Exit
-                    else if(userinput.equals("E")){
-                      //DeRegister!
-                      shapeListApi.deregister(callbackId);
-                      running = false; 
-                    }
-                    
-                    //Handle outliers
-                    else{
-                      System.out.println("Bad input!");
+                    switch (userinput) {
+                        case "R":
+                            printObjectList(listOfGObjs);
+                            startMessage();
+                            break;
+                        case "W":
+                            shapeMessage();
+                            String shapeType = reader.readLine();
+                            GraphicalObject g = new GraphicalObject(shapeType);
+                            if (shapeListApi.newShape(g) == null)
+                                System.out.println("Shape already in list, hint: [R]");
+                            break;
+                        case "E":
+                            //DeRegister!
+                            shapeListApi.deregister(callbackId);
+                            running = false;
+                            break;
+                        default:
+                            System.out.println("Bad input!");
+                            startMessage();
+                            break;
                     }
                 
-                }catch(Exception e){
-
+                }catch(IOException e){
+                    System.out.println(e.getMessage());
                 }
             }
             System.exit(0);
@@ -91,39 +98,56 @@ public class ShapeListClient implements WhiteBoardCallback{
         System.out.println("[R]ead, [W]rite, [E]xit:");
     }
     
+    public static void shapeMessage(){
+        System.out.println("Enter the type of geometric object to write: ");
+    }
+    
     //Copy the new elemtes and change the version number.
-    private static void copyGraphicalObjects(ArrayList<Shape> ls, int version) throws RemoteException, CloneNotSupportedException{
-        
-        if (latestVersion != version) {
-            for (int i = listOfGObjs.size(); i < ls.size(); i++) {
-                listOfGObjs.add(i, ls.get(i).getAllState().Clone());
-            }
-            
-            latestVersion = version;
-        }
-        
+    private static ArrayList<GraphicalObject> newObjects(ArrayList<Shape> ls, int version) throws RemoteException, CloneNotSupportedException{
+        latestVersion = version;
+        return  ls.stream().map(s -> getGraphicalObjectFromShape(s))
+                .collect(Collectors.toCollection(ArrayList::new));
+       
  
     }
+    
+    //Print the list of graphicalobjects
     private static void printObjectList(ArrayList<GraphicalObject> ls){
         for(GraphicalObject g : ls){
             g.print();
         }
+       
     }
-
+    
+    
+    //The callback for the server
     @Override
     public void callback(){
         
         try {
-            copyGraphicalObjects(shapeListApi.allShapes(), shapeListApi.getVersion());
+            listOfGObjs.addAll(newObjects(shapeListApi.allShapes(latestVersion), shapeListApi.getVersion()));
             System.out.println("The list has been modified:");
             System.out.println("---------------------------");
             printObjectList(listOfGObjs);
             System.out.println("---------------------------");
+            startMessage();
         } catch (RemoteException remoteException) {
         } catch (CloneNotSupportedException cloneNotSupportedException) {
         }
         
     }
+    
+    //Function used for fetching the graphicalobject from a shape
+    private static GraphicalObject getGraphicalObjectFromShape(Shape s){
+        try {
+            return s.getAllState().Clone();
+        } catch (RemoteException ex) {
+            return null;
+        }
+        catch(CloneNotSupportedException ex){
+            return null;
+        }
+    };
 }
 
 
